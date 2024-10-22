@@ -52,7 +52,7 @@ const output = {
 const collections = [];
 // Define the databases
 const databases = [];
-function main() {
+function generateDataAdfJson() {
     // Get all the databases
     const allDatabases = db.adminCommand({ listDatabases: 1 }).databases;
     // Filtered databases
@@ -107,4 +107,4 @@ function main() {
     // writeFileSync('data-federation-output.json', JSON.stringify(output, null, 2))
     return output;
 }
-main();
+generateDataAdfJson();

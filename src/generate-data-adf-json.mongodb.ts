@@ -74,7 +74,7 @@ const collections: Collection[] = []
 const databases: Database[] = []
 
 
-function main() {
+function generateDataAdfJson() {
   // Get all the databases
   const allDatabases = db.adminCommand({ listDatabases: 1 }).databases
 
@@ -142,4 +142,4 @@ function main() {
   return output
 }
 
-main()
+generateDataAdfJson()
