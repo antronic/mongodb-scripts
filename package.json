@@ -1,0 +1,32 @@
+{
+  "name": "mongodb-scripts",
+  "version": "1.0.0",
+  "description": "MongoDB script to use in various situation",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "a"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/antronic/mongodb-scripts.git"
+  },
+  "keywords": [
+    "MongoDB",
+    "Mongosh",
+    "MongoDB",
+    "Atlas"
+  ],
+  "author": "Jirachai Chansivanon <jirachai.c@mongodb.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/antronic/mongodb-scripts/issues"
+  },
+  "homepage": "https://github.com/antronic/mongodb-scripts#readme",
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "mongodb": "^6.10.0",
+    "mongosh": "^2.3.2"
+  }
+}
