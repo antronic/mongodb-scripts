@@ -1,7 +1,7 @@
 const sourceDatabase = ''
 const targetDatabase = ''
 
-const excludeCollections = []
+const excludeCollections = ['system.profile']
 
 use(sourceDatabase)
 
@@ -15,5 +15,13 @@ db.getCollectionNames().forEach(collection => {
 
   print(`Cloning collection ${collection}...`)
 
-  sourceCollection.aggregate([{ $match: {} }, { $out: targetCollection.getName() }])
+  sourceCollection.aggregate([
+    { $match: {} },
+    {
+      $out: {
+        db: targetDatabase,
+        coll: collection,
+      }
+    }
+  ])
 })
