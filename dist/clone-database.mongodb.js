@@ -59,6 +59,7 @@ function main() {
     // Filter the databases
     if (isIncludeMode) {
         targetDatabases = allDatabases.filter(database => includeDatabases.includes(database.name));
+        targetDatabases = targetDatabases.filter(database => !excludeDatabases.includes(database.name));
     }
     else {
         targetDatabases = allDatabases.filter(database => !excludeDatabases.includes(database.name));

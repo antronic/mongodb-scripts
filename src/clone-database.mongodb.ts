@@ -19,6 +19,11 @@ const atlasDataSourceConfig: DataSourceAtlas = {
   },
 }
 
+// Define the target and exclude databases
+const excludeDatabases: string[] = ['admin', 'config', 'local']
+const includeDatabases: string[] = []
+const isIncludeMode = false
+
 const s3DataSources: DataSourceS3[] = [
   {
     name: 'SinkDataSource',
@@ -61,11 +66,6 @@ const output: DataFederationOutput = {
   stores: [],
 }
 
-// Define the target and exclude databases
-const excludeDatabases: string[] = ['admin', 'config', 'local']
-const includeDatabases: string[] = []
-const isIncludeMode = false
-
 // Define the collections
 const collections: Collection[] = []
 
@@ -83,6 +83,7 @@ function main() {
   // Filter the databases
   if (isIncludeMode) {
     targetDatabases = allDatabases.filter(database => includeDatabases.includes(database.name))
+    targetDatabases = targetDatabases.filter(database => !excludeDatabases.includes(database.name))
   } else {
     targetDatabases = allDatabases.filter(database => !excludeDatabases.includes(database.name))
   }
