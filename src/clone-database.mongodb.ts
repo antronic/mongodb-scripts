@@ -24,6 +24,7 @@ const excludeDatabases: string[] = ['admin', 'config', 'local']
 const includeDatabases: string[] = []
 const isIncludeMode = false
 
+// Add the S3 data sources
 const s3DataSources: DataSourceS3[] = [
   {
     name: 'SinkDataSource',
