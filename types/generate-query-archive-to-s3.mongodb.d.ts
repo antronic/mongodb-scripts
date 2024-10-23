@@ -12,6 +12,7 @@ type BackupConfig = {
    * The field we need to compare to dataRentention
    */
   timeField: string
+  isTimeFieldIsString: boolean
   /**
    * The time granularity we need to compare to dataRentention
    */

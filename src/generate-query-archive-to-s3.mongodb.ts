@@ -15,7 +15,9 @@ const config: BackupConfig = {
   monthRentention: 3,
   // The field we need to compare to dataRentention
   timeField: 'A_COMMIT_TIMESTAMP',
+  isTimeFieldIsString: true,
   // The time granularity we need to compare to dataRentention
+  // The value can be 'day', 'month', 'year'
   timeGanularity: 'day',
 }
 
@@ -36,14 +38,17 @@ const isCustomTimeRange = false
 const start = null
 const end = null
 
+
+type FuncCustomFolderStructure = (db: string, coll: string) => string
+
 /**
  * Generate the folder structure based on the time granularity
  *
  * @param timestamp
  * @returns
  */
-function generateFolderStructure(timestamp: Date) {
-  const folders: string[] = []
+function generateFolderStructure(timestamp: Date, db: string, coll: string, customFolderStructure: FuncCustomFolderStructure = (db: string, coll: string) => `${db}/${coll}`): string {
+  const folders: string[] = [customFolderStructure(db, coll)]
 
   const ts = new Date(timestamp)
 
@@ -55,8 +60,8 @@ function generateFolderStructure(timestamp: Date) {
       folders.push(ts.getDate().toString().padStart(2, '0'))
       break
     case 'month':
+      folders.push(ts.getFullYear().toString())
       folders.push((ts.getMonth() + 1).toString().padStart(2, '0'))
-      folders.push((ts.getMonth() + 1).toString())
       break
     case 'year':
       folders.push(ts.getFullYear().toString())
@@ -69,12 +74,12 @@ function generateFolderStructure(timestamp: Date) {
 
 const batches: Function[] = []
 
-function generateArchiveQueryToS3(database: string) {
+function generateArchiveQueryToS3(database: string, _excludeCollections: string[] = excludeCollections, customFolderStructure?: FuncCustomFolderStructure) {
   use(database)
 
   const collections = db.getSiblingDB(database)
     .getCollectionNames()
-    .filter((collection: string) => !excludeCollections.includes(collection))
+    .filter((collection: string) => !_excludeCollections.includes(collection))
 
   for (const collection of collections) {
     const pipeline: any[] = []
@@ -111,11 +116,20 @@ function generateArchiveQueryToS3(database: string) {
 
       }
 
-      const query = {
+      let query = {
         [config.timeField]: {
           $lt: `ISODate('${endDate.toISOString()}')`,
           $gte: `ISODate('${startDate.toISOString()}')`,
         },
+      }
+
+      if (config.isTimeFieldIsString) {
+        query = {
+          [config.timeField]: {
+            $lt: `${endDate.getFullYear()}-${endDate.getMonth() + 1}-${endDate.getDate()}`,
+            $gte: `${startDate.getFullYear()}-${startDate.getMonth() + 1}-${startDate.getDate()}`,
+          },
+        }
       }
 
       return {
@@ -134,7 +148,7 @@ function generateArchiveQueryToS3(database: string) {
     }
 
     // Generate the folder structure
-    const folderStructure = generateFolderStructure(startDate)
+    const folderStructure = generateFolderStructure(startDate, database, collection, customFolderStructure)
     const fileName = `${folderStructure}/${collection}_${getYMD(startDate)}_${getYMD(endDate)}.${sinkS3Config.format.name}`
 
     // $out to S3
@@ -189,11 +203,32 @@ function generateArchiveQueryToS3(database: string) {
   return results
 }
 
-generateArchiveQueryToS3(database)
+/**
+ * Archive databases mapping
+ * This function will archive all collections in the database by default
+ *
+ * The first element is the database name
+ * The second element is the collections to Exclude
+ * The third element is the custom folder structure function
+ */
+const archiveDatabases: [string, string[], FuncCustomFolderStructure][] = [
+  ['VirtualDatabase0', ['VirtualCollection0'], (db, coll) => `GROUP/${db}/${coll}`],
+]
+
+
+function startArchive() {
+  for (const [db, colls, folder] of archiveDatabases) {
+    generateArchiveQueryToS3(db, colls, folder)
+  }
+}
+
+startArchive()
 
 // ======================================================================
 // Warning: The delete after archive is enabled
-console.log()
-console.log('################################################')
-console.log('# Warning: The delete after archive is enabled #')
-console.log('################################################')
+if (isDeleteAfterArchive) {
+  console.log()
+  console.log('################################################')
+  console.log('# Warning: The delete after archive is enabled #')
+  console.log('################################################')
+}
