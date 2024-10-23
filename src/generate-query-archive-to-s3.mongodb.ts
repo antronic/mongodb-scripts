@@ -2,9 +2,10 @@
 /**
  * Database name
  */
-const database: string = ''
-
+const database: string = 'mock_data'
 const excludeCollections: string[] = []
+
+const isDeleteAfterArchive = false
 
 /**
  * Backup configuration
@@ -49,11 +50,12 @@ function generateFolderStructure(timestamp: Date) {
   switch (config.timeGanularity) {
     case 'day':
       folders.push(ts.getFullYear().toString())
-      folders.push((ts.getMonth() + 1).toString())
-      folders.push(ts.getDate().toString())
+      // month is lower than 10, we need to add 0 in front of it
+      folders.push((ts.getMonth() + 1).toString().padStart(2, '0'))
+      folders.push(ts.getDate().toString().padStart(2, '0'))
       break
     case 'month':
-      folders.push(ts.getFullYear().toString())
+      folders.push((ts.getMonth() + 1).toString().padStart(2, '0'))
       folders.push((ts.getMonth() + 1).toString())
       break
     case 'year':
@@ -70,7 +72,7 @@ const batches: Function[] = []
 function generateArchiveQueryToS3(database: string) {
   use(database)
 
-  const collections = db.getSisterDB(database)
+  const collections = db.getSiblingDB(database)
     .getCollectionNames()
     .filter((collection: string) => !excludeCollections.includes(collection))
 
@@ -102,6 +104,8 @@ function generateArchiveQueryToS3(database: string) {
 
         if (end !== null) {
           endDate = new Date(end)
+        } else {
+          endDate = new Date(startDate.getFullYear(), startDate.getMonth() + config.monthRentention, 0)
         }
       } else {
 
@@ -109,16 +113,10 @@ function generateArchiveQueryToS3(database: string) {
 
       const query = {
         [config.timeField]: {
-          $lt: endDate,
-          $gte: startDate,
+          $lt: `ISODate('${endDate.toISOString()}')`,
+          $gte: `ISODate('${startDate.toISOString()}')`,
         },
       }
-
-      pipeline.push(
-        {
-          $match: query,
-        }
-      )
 
       return {
         query,
@@ -128,7 +126,8 @@ function generateArchiveQueryToS3(database: string) {
     }
 
     // Generate the query
-    const { startDate, endDate } = generateQuery(new Date())
+    const { startDate, endDate, query } = generateQuery(new Date())
+    pipeline.push({ $match: query })
 
     function getYMD(date: Date) {
       return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`
@@ -136,7 +135,7 @@ function generateArchiveQueryToS3(database: string) {
 
     // Generate the folder structure
     const folderStructure = generateFolderStructure(startDate)
-    const fileName = `${folderStructure}/${collection}_${getYMD(startDate)}_${getYMD(endDate)}`
+    const fileName = `${folderStructure}/${collection}_${getYMD(startDate)}_${getYMD(endDate)}.${sinkS3Config.format.name}`
 
     // $out to S3
     pipeline.push(
@@ -150,14 +149,25 @@ function generateArchiveQueryToS3(database: string) {
       }
     )
 
-    batches.push(() => {
-      db.getSlibingDB(database)
-        .getCollection(collection)
-        .aggregate(pipeline)
-    })
+    batches.push(() => `db.getSiblingDB("${database}").getCollection("${collection}").aggregate(${JSON.stringify(pipeline).replace(/"ISODate\((.*?)\)"/g, 'ISODate($1)')});`)
+
+    // Delete the data after archive
+    if (isDeleteAfterArchive) {
+      batches.push(() => `db.getSiblingDB("${database}").getCollection("${collection}").deleteMany({query:${JSON.stringify(query).replace(/"ISODate\((.*?)\)"/g, 'ISODate($1)')}});`)
+    }
   }
 
-  return batches
+  const results = batches.map((batch, index) => {
+    console.log(`Running batch ${index + 1}...`)
+    return batch()
+  })
+
+  console.log('----------------------------------------')
+  console.log('Done!')
+  console.log('----------------------------------------')
+  results.forEach((result) => console.log(result))
+
+  return results
 }
 
 generateArchiveQueryToS3(database)
