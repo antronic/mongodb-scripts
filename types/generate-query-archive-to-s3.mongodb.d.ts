@@ -7,7 +7,7 @@ type BackupConfig = {
   /**
    * How month long we need to keep on MongoDB before we can archive to S3
    */
-  monthRentention: number
+  monthRetention: number
   /**
    * The field we need to compare to dataRentention
    */
