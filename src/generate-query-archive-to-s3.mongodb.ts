@@ -165,9 +165,35 @@ function generateArchiveQueryToS3(database: string) {
   console.log('----------------------------------------')
   console.log('Done!')
   console.log('----------------------------------------')
+
+  function printSummary() {
+    console.log(`Database: ${database}`)
+    console.log(`Collections: ${collections.join(', ')}`)
+    console.log(`Time granularity: ${config.timeGanularity}`)
+    console.log(`Time field: ${config.timeField}`)
+    console.log(`Delete after archive: ${isDeleteAfterArchive}`)
+  }
+  printSummary()
+  console.log('----------------------------------------')
+
+  console.log()
+  console.log()
+  console.log('Result:')
+  console.log()
+  console.log('=========================================')
   results.forEach((result) => console.log(result))
+  console.log('=========================================')
+  console.log()
+  console.log()
 
   return results
 }
 
 generateArchiveQueryToS3(database)
+
+// ======================================================================
+// Warning: The delete after archive is enabled
+console.log()
+console.log('################################################')
+console.log('# Warning: The delete after archive is enabled #')
+console.log('################################################')
