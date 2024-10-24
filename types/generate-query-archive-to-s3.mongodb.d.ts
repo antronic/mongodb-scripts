@@ -5,9 +5,27 @@
  */
 type BackupConfig = {
   /**
-   * How month long we need to keep on MongoDB before we can archive to S3
+   * How many month long we need to keep on MongoDB before we can archive to S3
    */
-  monthRetention: number
+  monthToArchive: number
+  /**
+   * How many month long we need to keep on MongoDB before we can delete
+   */
+  monthToKeep: number
+  /**
+   * Backup the data that we keep on MongoDB
+   */
+  backupKeepData: boolean
+  /**
+   * Backup from starting point
+   */
+  backupFromStart: boolean
+
+  /**
+   * Backup include starting point month
+   */
+  includeCurrentMonth: boolean
+
   /**
    * The field we need to compare to dataRentention
    */
@@ -15,8 +33,15 @@ type BackupConfig = {
   isTimeFieldIsString: boolean
   /**
    * The time granularity we need to compare to dataRentention
+   * NOT SUPPORT YET
    */
-  timeGanularity: 'day' | 'month' | 'year'
+  // timeGanularity: 'day' | 'month' | 'year'
+
+  customTimeRange?: null | {
+    dateTime?: string | null
+    // start?: string | null
+    // end?: string | null
+  }
 }
 
 /**
@@ -39,4 +64,9 @@ type SinkS3Config = {
      */
     columnCompression?: 'snappy' | 'gzip' | 'uncompressed'
   }
+}
+
+type SystemConfig = {
+  startDateTime: Date | null
+  endDateTime: Date | null
 }

@@ -1,4 +1,11 @@
 const dayjs = require('dayjs')
+const utc = require('dayjs/plugin/utc')
+dayjs.extend(utc)
+// ignore timezone
+const timezone = require('dayjs/plugin/timezone')
+dayjs.extend(timezone)
+
+
 // ======================================================================
 /**
  * Database name
@@ -6,19 +13,44 @@ const dayjs = require('dayjs')
 const isDeleteAfterArchive = false
 
 /**
+ * Archive databases mapping
+ * This function will archive all collections in the database by default
+ *
+ * The first element is the database name
+ * The second element is the collections to Exclude
+ * The third element is the custom folder structure function
+ */
+const archiveDatabases: [string, string[], FuncCustomFolderStructure][] = [
+  // ['VirtualDatabase0', ['VirtualCollection0'], (db, coll) => `GROUP/${db}/${coll}`],
+  ['BIAN_ITML_ARC', [''], (db, coll) => `BIAN/${db}/${coll}`],
+]
+
+
+/**
  * Backup configuration
  */
 const config: BackupConfig = {
   // How many month long we need to keep on MongoDB before we can archive to S3
   // Control direction
-  monthRetention: 3,
+  monthToArchive: 3,
+  // How many month long we need to keep on MongoDB before we can delete
+  monthToKeep: 3,
+  // Backup the data that we keep on MongoDB
+  backupKeepData: false,
+  // Backup from starting of database
+  backupFromStart: false,
+  // Backup include starting point month
+  includeCurrentMonth: false,
+
   // The field we need to compare to dataRentention
   timeField: 'A_COMMIT_TIMESTAMP',
   // The time field is string or not
   isTimeFieldIsString: true,
-  // The time granularity we need to compare to dataRentention
-  // The value can be 'day', 'month', 'year'
-  timeGanularity: 'month',
+
+  // The custom time range
+  customTimeRange: {
+    dateTime: '2024-10-01',
+  }
 }
 
 /**
@@ -31,13 +63,19 @@ const sinkS3Config: SinkS3Config = {
     name: 'bson.gz',
   }
 }
-
 // ======================================================================
-// Custom the filter
-const isCustomTimeRange = true
-const start = "2024-10-01"
-const end = null
 
+interface SummaryInformation {
+  databases: { [key: string]: string[] };
+  time: number;
+}
+
+let summaryInformation: SummaryInformation = { databases: {}, time: 0 };
+
+let _system_confing: SystemConfig = {
+  startDateTime: dayjs(),
+  endDateTime: dayjs(),
+}
 
 // Function add leading zero
 function addLeadingZero(value: number): string {
@@ -57,21 +95,27 @@ function generateFolderStructure(timestamp: Date, db: string, coll: string, cust
 
   const ts = new Date(timestamp)
 
-  switch (config.timeGanularity) {
-    case 'day':
-      folders.push(ts.getFullYear().toString())
-      // month is lower than 10, we need to add 0 in front of it
-      folders.push(addLeadingZero(ts.getMonth() + 1))
-      folders.push(addLeadingZero(ts.getDate()))
-      break
-    case 'month':
-      folders.push(ts.getFullYear().toString())
-      folders.push(addLeadingZero(ts.getMonth() + 1))
-      break
-    case 'year':
-      folders.push(ts.getFullYear().toString())
-      break
-  }
+  folders.push(ts.getFullYear().toString())
+  folders.push(addLeadingZero(ts.getMonth() + 1))
+
+  // NOT SUPPORT YET, we will support it later
+  // Currently, we only support month granularity
+
+  // switch (config.timeGanularity) {
+  //   case 'day':
+  //     folders.push(ts.getFullYear().toString())
+  //     // month is lower than 10, we need to add 0 in front of it
+  //     folders.push(addLeadingZero(ts.getMonth() + 1))
+  //     folders.push(addLeadingZero(ts.getDate()))
+  //     break
+  //   case 'month':
+  //     folders.push(ts.getFullYear().toString())
+  //     folders.push(addLeadingZero(ts.getMonth() + 1))
+  //     break
+  //   case 'year':
+  //     folders.push(ts.getFullYear().toString())
+  //     break
+  // }
 
   return folders.join('/')
 }
@@ -86,10 +130,85 @@ function generateArchiveQueryToS3(database: string, _excludeCollections: string[
 
   let databasesResult = {}
 
+  /**
+     * Define month range
+     */
+  function setupMonthRange() {
+    const today = dayjs()
+    let _startDate = dayjs(today).startOf('month').startOf('day')
+    let _endDate = dayjs(today).startOf('month').startOf('day')
+
+    function setupDefaultRange() {
+      // Mid night of first day of the month
+      _startDate = dayjs(today).startOf('month')
+      // if isBackupFromStart is true, we need to backup from the start
+      if (config.backupFromStart) {
+        _startDate = null
+      }
+    }
+
+    setupDefaultRange()
+
+    let useCustomTimeRange = false
+    // if has customTimrRange is true, we will use the custom time range
+    if (config.customTimeRange && config.customTimeRange.dateTime !== null) {
+      useCustomTimeRange = true
+
+      try {
+        if (config.customTimeRange.dateTime !== null) {
+          const dateTime = dayjs(config.customTimeRange.dateTime)
+
+          _startDate = dayjs(dateTime).startOf('month')
+          _endDate = dayjs(dateTime).endOf('month').add(1, 'day').startOf('day')
+          if (!config.includeCurrentMonth) {
+            _endDate = _endDate.subtract(1, 'month').startOf('month').startOf('day')
+          }
+        }
+      } catch (error) {
+        console.error('Invalid custom time range')
+        throw error
+      }
+    }
+
+    _startDate = dayjs(_startDate).startOf('month')
+    if (config.backupKeepData) {
+      _startDate = dayjs(_startDate).subtract(config.monthToArchive, 'month').startOf('month').startOf('day')
+    } else {
+      _endDate = dayjs(_endDate).subtract(config.monthToKeep, 'month').startOf('day')
+      _startDate = dayjs(_startDate).subtract(config.monthToArchive + config.monthToKeep, 'month').startOf('month').startOf('day')
+    }
+
+    console.log([_startDate.format('YYYY-MM-DD HH:mm'), _endDate.format('YYYY-MM-DD HH:mm'), dayjs().date()])
+
+    _system_confing.endDateTime = _endDate
+    _system_confing.startDateTime = _startDate
+
+    const monthRange: number = dayjs(_endDate).diff(_startDate, 'month')
+
+    function extractYearMonthFromRange() {
+      let curr = dayjs(_startDate).format('YYYY-MM-DD')
+      return new Array(monthRange).fill(0).map((_, index) => {
+        const next = dayjs(curr).add(1, 'month').startOf('month').format('YYYY-MM-DD')
+        const range = [curr, next]
+        curr = next
+        return range
+      })
+    }
+
+    // Return different month range
+    return { monthRange, range: extractYearMonthFromRange() }
+  }
+
+  const { monthRange, range } = setupMonthRange()
+
+  console.log('Month range:', monthRange)
+  console.log(range)
+
+  // return;
   for (const collection of collections) {
     // Aggregation pipeline
 
-    const batches: Function[] = []
+    const monthBatches: Function[] = []
     /**
      * Generate the archive collection
      */
@@ -104,11 +223,6 @@ function generateArchiveQueryToS3(database: string, _excludeCollections: string[
        */
       type Query = { query: any, startDate: Date, endDate: Date }
       function generateQuery(_startDate: Date, _endDate: Date): Query {
-        const direction = config.monthRetention > 0 ? -1 : 1
-        const dayGanularity = 0
-        const monthGanularity = config.timeGanularity === 'month' ? 1 : 0
-        const yearGanularity = 0
-
         // Generate the query
         let query: any = {
           [config.timeField]: {
@@ -160,128 +274,90 @@ function generateArchiveQueryToS3(database: string, _excludeCollections: string[
         }
       )
 
-      batches.push(() => `db.getSiblingDB("${database}").getCollection("${collection}").aggregate(${JSON.stringify(pipeline).replace(/"ISODate\((.*?)\)"/g, 'ISODate($1)')});`)
+      monthBatches.push(() => `db.getSiblingDB("${database}").getCollection("${collection}").aggregate(${JSON.stringify(pipeline).replace(/"ISODate\((.*?)\)"/g, 'ISODate($1)')});`)
 
       // Delete the data after archive
       if (isDeleteAfterArchive) {
-        batches.push(() => `db.getSiblingDB("${database}").getCollection("${collection}").deleteMany({query:${JSON.stringify(query).replace(/"ISODate\((.*?)\)"/g, 'ISODate($1)')}});`)
+        // monthBatches.push(() => `db.getSiblingDB("${database}").getCollection("${collection}").deleteMany({query:${JSON.stringify(query).replace(/"ISODate\((.*?)\)"/g, 'ISODate($1)')}});`)
+        monthBatches.push(() => `db.getSiblingDB("${database}").getCollection("${collection}")
+        .updateMany(
+          { "${config.timeField}": ${JSON.stringify(query).replace(/"ISODate\((.*?)\)"/g, 'ISODate($1)')} },
+          { "archived": true }
+        );`)
       }
 
-      return batches
+      return monthBatches
     }
+
 
     // Generate the archive collection by month
-    for (let i = 0; i < Math.abs(config.monthRetention); i++) {
-      const today = new Date()
-
-      // let _start = new Date(Date.UTC(today.getUTCFullYear(), today.getMonth() - (i), 1))
-      let _start = dayjs(today).subtract(i, 'month').startOf('month').toDate()
-
-      // let _end = new Date(Date.UTC(_start.getFullYear(), _start.getMonth() + 1, 1, 0, 0, 0, 0))
-
-      if (isCustomTimeRange) {
-        if (start !== null) {
-          // const startIsoDate = new Date(start)
-          // const __startCustom = new Date(Date.UTC(startIsoDate.getFullYear(), startIsoDate.getMonth(), startIsoDate.getDate()))
-          const __startCustom = dayjs(start).startOf('day').toDate()
-          // _start = new Date(Date.UTC(__startCustom.getFullYear(), __startCustom.getMonth() - i, 1))
-          _start = dayjs(__startCustom).subtract(i, 'month').startOf('month').toDate()
-        }
-
-        // if (config.monthRetention > 0) {
-        //   _start = new Date(Date.UTC(today.getUTCFullYear(), today.getMonth() + (i), 1))
-        // }
-
-        if (start !== null && end === null) {
-          // if (config.monthRetention > 0) {
-          //   _start = new Date(Date.UTC(start))
-          //   _end = new Date(Date.UTC(_start.getFullYear(), _start.getMonth() + (i ), 0))
-          // } else {
-          //   _start = new Date(Date.UTC(_start.getFullYear(), _start.getMonth() + (i), 0))
-          //   _end = new Date(Date.UTC(start))
-          // }
-        }
-      }
-
-      let _end = dayjs(_start).endOf('month').add(1, 'day').toDate()
-      console.log('_start', _start)
-      console.log(_end)
-
-      // Mid night of first day of the month
-      // let _startDate: Date = new Date(startDate.getFullYear(), startDate.getMonth(), 1)
-
-      // End of last month
-      // let _endDate = new Date(_startDate.getFullYear(), _startDate.getMonth() + monthGanularity, 0)
-
-      // ==================
-      // console.log({_start, _end})
-      const batches = generateArchiveCollectionByMonth(_start, _end)
-      databasesResult = {
-        ...databasesResult,
-        [`${database}.${collection}`]: batches.map((batch, index) => {
-          console.log(`Running batch ${database}.${collection} - [${_start}, ${_end}]...`)
-          return batch()
-        })
-      }
+    for (let i = 0; i < Math.abs(range.length); i++) {
+      const start = dayjs(range[i][0]).toDate()
+      const end = dayjs(range[i][1]).toDate()
+      // const batches = generateArchiveCollectionByMonth(start, end)
+      generateArchiveCollectionByMonth(start, end)
     }
+
+    databasesResult = {
+      ...databasesResult,
+      [`${database}.${collection}`]: monthBatches.map((batch, index) => {
+        console.log(`Running batch ${database}.${collection}... [${index + 1}/${monthBatches.length}]`)
+        return batch()
+      })
+    }
+
+    summaryInformation.databases = {
+      ...summaryInformation.databases,
+      [database]: [...summaryInformation.databases[database], collection],
+    }
+
     console.log('==========================')
   }
-
-  // const results = batches.map((batch, index) => {
-  //   console.log(`Running batch ${index + 1}...`)
-  //   return batch()
-  // })
 
   // return results
   return databasesResult
 }
 
-// function func() {
-//   console.log('----------------------------------------')
-//   console.log('Done!')
-//   console.log('----------------------------------------')
+function printSummary() {
+  console.log('########################################')
+  console.log('############# SUMMARY ##################')
+  console.log('########################################')
+  const dbs = Object.keys(summaryInformation.databases)
+  console.log(`Database [${dbs.length}]: ${dbs.join(', ')}`)
+  console.log('--------------------')
 
-//   function printSummary() {
-//     console.log(`Database: ${database}`)
-//     console.log(`Collections: ${collections.join(', ')}`)
-//     console.log(`Time granularity: ${config.timeGanularity}`)
-//     console.log(`Time field: ${config.timeField}`)
-//     console.log(`Delete after archive: ${isDeleteAfterArchive}`)
-//   }
-//   printSummary()
-//   console.log('----------------------------------------')
+  Object.keys(summaryInformation.databases)
+    .forEach((db) => {
+      const collections = summaryInformation.databases[db]
+      console.log(`Database: ${db}`)
+      console.log(`Collections [${collections.length}]: ${collections.join(', ')}`)
+      console.log('--------------------')
+    })
 
-//   console.log()
-//   console.log()
-//   console.log('Result:')
-//   console.log()
-//   console.log('=========================================')
-//   results.forEach((result) => console.log(result))
-//   console.log('=========================================')
-//   console.log()
-//   console.log()
-// }
+  console.log(`Time field: ${config.timeField}`)
+  console.log(`Delete after archive: ${isDeleteAfterArchive}`)
+  console.log('--------------------')
+  console.log(`Time usage: ${summaryInformation.time} ms`)
+  console.log('########################################')
+}
 
-/**
- * Archive databases mapping
- * This function will archive all collections in the database by default
- *
- * The first element is the database name
- * The second element is the collections to Exclude
- * The third element is the custom folder structure function
- */
-const archiveDatabases: [string, string[], FuncCustomFolderStructure][] = [
-  ['VirtualDatabase0', ['VirtualCollection0'], (db, coll) => `GROUP/${db}/${coll}`],
-]
-
+// ======================================================================
+// ======================================================================
 const allResults: any[] = []
+let startExecution = 0
 
 function startArchive() {
+  startExecution = Date.now()
   for (const [db, colls, folder] of archiveDatabases) {
+    summaryInformation.databases = {
+      ...summaryInformation.databases,
+      [db]: [],
+    }
     const result = generateArchiveQueryToS3(db, colls, folder)
     allResults.push(result)
   }
 
+  console.log("=========================================")
   console.log("RESULT:")
   console.log("=========================================")
   // allResults.forEach(result => console.log(result))
@@ -294,7 +370,10 @@ function startArchive() {
       // console.log(`# -- ${key} | COLL END -- #`)
     })
   })
+  summaryInformation.time = Date.now() - startExecution
+
   // Object.values(allResults).forEach(result => console.log(result))
+  printSummary()
 }
 
 startArchive()
